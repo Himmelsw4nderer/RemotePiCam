@@ -24,7 +24,7 @@ class GStreamerCapture:
     def __init__(self):
         self.frame = None
         self.pipeline = Gst.parse_launch(
-            'v4l2src ! video/x-raw,format=YUY2,width=640,height=480 ! jpegenc ! multifilesink location=/tmp/frame.jpg'
+            'v4l2src ! video/x-raw,format=YUY2,width=640,height=480 ! videoconvert ! jpegenc ! multifilesink location=/tmp/frame.jpg'
         )
         self.bus = self.pipeline.get_bus()
         self.bus.add_signal_watch()
