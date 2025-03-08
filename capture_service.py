@@ -1,48 +1,54 @@
-import cv2
+import subprocess
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import io
-from PIL import Image
 import base64
 from loguru import logger
 
-def capture_image(camera_id):
+def capture_image():
     """
-    Captures an image from the specified camera device.
+    Capture an image using libcamera and return the image bytes.
 
-    Args:
-        camera_id: Integer ID of the camera device to capture from
+    This function uses the `libcamera-jpeg` command to capture an image from the camera
+    and save it to a temporary file (/tmp/capture.jpg). The image bytes are then read
+    from the file and returned.
 
     Returns:
-        frame: OpenCV image frame if successful, None if capture fails
+        bytes: The captured image bytes, or None if the capture failed.
     """
-    logger.debug(f"Attempting to capture image from camera ID {camera_id}")
-    cap = cv2.VideoCapture(camera_id)
-    ret, frame = cap.read()
-    if ret:
-        logger.info(f"Image captured successfully from camera ID {camera_id}")
-        cap.release()
-        return frame
-    else:
-        logger.error(f"Failed to capture image from camera ID {camera_id}")
-        cap.release()
+    logger.debug("Attempting to capture image using libcamera")
+    try:
+        subprocess.run(["libcamera-jpeg", "-o", "/tmp/capture.jpg", "-n"], check=True)
+        logger.info("Image captured successfully")
+        with open("/tmp/capture.jpg", "rb") as image_file:
+            image_bytes = image_file.read()
+        return image_bytes
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to capture image using libcamera: {e}")
         return None
 
 class RequestHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for camera capture service"""
+    """
+    HTTP request handler for the image capture service.
 
+    This handler processes GET requests to the /capture endpoint. If the request path
+    is /capture, it captures an image using the `capture_image` function, encodes it
+    in base64, and sends it back in the response. For other paths, it returns a 404
+    response.
+    """
     def do_GET(self):
         """
-        Handles GET requests - captures an image from camera if /capture path is requested
+        Handle GET requests.
+
+        This method processes GET requests by capturing an image if the request path is
+        /capture, and sending appropriate responses based on the success or failure of
+        the capture.
         """
         logger.debug(f"Received GET request for path: {self.path}")
         if self.path == '/capture':
             logger.info("Processing capture request")
-            image = capture_image(0)
-            if image is not None:
-                _, jpeg = cv2.imencode('.jpg', image)
-                image_bytes = jpeg.tobytes()
+            image_bytes = capture_image()
+            if image_bytes is not None:
                 base64_image = base64.b64encode(image_bytes).decode('utf-8')
-
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
@@ -59,12 +65,15 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run(server_class=HTTPServer, handler_class=RequestHandler, port=8080):
     """
-    Starts the HTTP server to handle camera capture requests
+    Run the HTTP server for the image capture service.
+
+    This function initializes and starts the HTTP server on the specified port, using the
+    specified server and handler classes.
 
     Args:
-        server_class: HTTP server class to use, defaults to HTTPServer
-        handler_class: Request handler class to use, defaults to RequestHandler
-        port: Port number to run server on, defaults to 8080
+        server_class (type): The class to use for the HTTP server.
+        handler_class (type): The class to use for handling HTTP requests.
+        port (int): The port on which to run the HTTP server.
     """
     logger.info(f"Starting capture service on port {port}...")
     server_address = ('', port)

@@ -44,7 +44,7 @@ def save_image(image_bytes, filename):
         logger.error(f"Exception occurred while saving image {filename}: {e}")
 
 if __name__ == '__main__':
-    pi_addresses = ['raspberrypi1.local', 'raspberrypi2.local']
+    pi_addresses = ['192.168.178.184', '192.168.178.152']
 
     for pi_address in pi_addresses:
         image_bytes = capture_image_from_pi(pi_address)
