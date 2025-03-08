@@ -1,39 +1,104 @@
-import subprocess
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 import io
 import base64
 from loguru import logger
 
-def capture_image():
-    """
-    Capture an image using libcamera and return the image bytes.
+# Initialize GStreamer
+Gst.init(None)
 
-    This function uses the `libcamera-jpeg` command to capture an image from the camera
-    and save it to a temporary file (/tmp/capture.jpg). The image bytes are then read
-    from the file and returned.
-
-    Returns:
-        bytes: The captured image bytes, or None if the capture failed.
+class GStreamerCapture:
     """
-    logger.debug("Attempting to capture image using libcamera")
-    try:
-        subprocess.run(["libcamera-jpeg", "-o", "/tmp/capture.jpg", "-n"], check=True)
-        logger.info("Image captured successfully")
-        with open("/tmp/capture.jpg", "rb") as image_file:
-            image_bytes = image_file.read()
-        return image_bytes
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to capture image using libcamera: {e}")
-        return None
+    GStreamerCapture class to handle GStreamer pipeline for continuous frame capture.
+
+    Attributes:
+        frame (bytes): The latest captured frame in bytes.
+        pipeline (Gst.Pipeline): The GStreamer pipeline for video capture.
+        bus (Gst.Bus): The GStreamer bus to handle messages from the pipeline.
+        lock (threading.Lock): Lock to handle thread-safe access to the frame.
+        running (bool): Flag to indicate if the capture loop is running.
+    """
+    def __init__(self):
+        self.frame = None
+        self.pipeline = Gst.parse_launch(
+            'v4l2src ! video/x-raw,format=YUY2,width=640,height=480 ! jpegenc ! multifilesink location=/tmp/frame.jpg'
+        )
+        self.bus = self.pipeline.get_bus()
+        self.bus.add_signal_watch()
+        self.bus.connect("message", self.on_message)
+        self.lock = threading.Lock()
+        self.running = False
+
+    def start(self):
+        """
+        Start the GStreamer pipeline and the capture loop in a separate thread.
+        """
+        self.running = True
+        self.pipeline.set_state(Gst.State.PLAYING)
+        threading.Thread(target=self.capture_loop).start()
+
+    def stop(self):
+        """
+        Stop the GStreamer pipeline and the capture loop.
+        """
+        self.running = False
+        self.pipeline.set_state(Gst.State.NULL)
+
+    def capture_loop(self):
+        """
+        Capture loop to continuously update the latest frame while the pipeline is running.
+        """
+        while self.running:
+            with self.lock:
+                self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+            self.bus.poll(Gst.MessageType.EOS, Gst.CLOCK_TIME_NONE)
+            self.update_frame()
+
+    def update_frame(self):
+        """
+        Update the latest frame by reading the captured image from the file.
+        """
+        try:
+            with open("/tmp/frame.jpg", "rb") as image_file:
+                self.frame = image_file.read()
+        except Exception as e:
+            logger.error(f"Failed to read frame: {e}")
+
+    def get_frame(self):
+        """
+        Get the latest captured frame in bytes.
+
+        Returns:
+            bytes: The latest captured frame.
+        """
+        with self.lock:
+            return self.frame
+
+    def on_message(self, bus, message):
+        """
+        Handle GStreamer bus messages.
+
+        Args:
+            bus (Gst.Bus): The GStreamer bus.
+            message (Gst.Message): The GStreamer message.
+        """
+        if message.type == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            logger.error(f"GStreamer error: {err}, {debug}")
+            self.stop()
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     """
     HTTP request handler for the image capture service.
 
     This handler processes GET requests to the /capture endpoint. If the request path
-    is /capture, it captures an image using the `capture_image` function, encodes it
-    in base64, and sends it back in the response. For other paths, it returns a 404
-    response.
+    is /capture, it retrieves the latest frame from the GStreamerCapture instance,
+    encodes it in base64, and sends it back in the response. For other paths, it
+    returns a 404 response.
     """
     def do_GET(self):
         """
@@ -46,9 +111,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         logger.debug(f"Received GET request for path: {self.path}")
         if self.path == '/capture':
             logger.info("Processing capture request")
-            image_bytes = capture_image()
-            if image_bytes is not None:
-                base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            frame = gstreamer_capture.get_frame()
+            if frame is not None:
+                base64_image = base64.b64encode(frame).decode('utf-8')
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html')
                 self.end_headers()
@@ -61,7 +126,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-            logger.warning(f"Path not found: {self.path}, sending 404 response")
+
 
 def run(server_class=HTTPServer, handler_class=RequestHandler, port=8080):
     """
@@ -82,4 +147,11 @@ def run(server_class=HTTPServer, handler_class=RequestHandler, port=8080):
     httpd.serve_forever()
 
 if __name__ == '__main__':
-    run()
+    gstreamer_capture = GStreamerCapture()
+    gstreamer_capture.start()
+    try:
+        run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        gstreamer_capture.stop()
