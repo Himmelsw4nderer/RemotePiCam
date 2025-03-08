@@ -25,7 +25,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             camera = Camera()
             image_path = "/tmp/frame.jpg"
             camera.take_photo(image_path)
-            camera.close()
             try:
                 with open(image_path, "rb") as image_file:
                     frame = image_file.read()
