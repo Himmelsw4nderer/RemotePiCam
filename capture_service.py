@@ -3,40 +3,38 @@ import threading
 import io
 import base64
 from loguru import logger
-from picamera import PiCamera
-from time import sleep
+from picamzero import Camera
 
-class PicameraCapture:
+class PicamZeroCapture:
     """
-    PicameraCapture class to handle PiCamera for continuous frame capture.
+    PicamZeroCapture class to handle picamzero for continuous frame capture.
 
     Attributes:
         frame (bytes): The latest captured frame in bytes.
         lock (threading.Lock): Lock to handle thread-safe access to the frame.
         running (bool): Flag to indicate if the capture loop is running.
+        camera (Camera): Instance of the Camera class from picamzero.
     """
     def __init__(self):
         self.frame = None
         self.lock = threading.Lock()
         self.running = False
-        self.camera = PiCamera()
-        self.camera.resolution = (640, 480)
-        self.camera.start_preview()
-        sleep(2)  # Allow the camera to warm up
+        self.camera = Camera()
+        self.camera.start()
 
     def start(self):
         """
-        Start the PiCamera capture loop in a separate thread.
+        Start the picamzero capture loop in a separate thread.
         """
         self.running = True
         threading.Thread(target=self.capture_loop).start()
 
     def stop(self):
         """
-        Stop the PiCamera capture loop.
+        Stop the picamzero capture loop.
         """
         self.running = False
-        self.camera.close()
+        self.camera.stop()
 
     def capture_loop(self):
         """
@@ -50,10 +48,9 @@ class PicameraCapture:
         """
         Update the latest frame by capturing an image from the camera.
         """
-        stream = io.BytesIO()
-        self.camera.capture(stream, format='jpeg')
-        stream.seek(0)
-        self.frame = stream.read()
+        self.camera.take_photo("/tmp/frame.jpg")
+        with open("/tmp/frame.jpg", "rb") as image_file:
+            self.frame = image_file.read()
 
     def get_frame(self):
         """
@@ -71,7 +68,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     HTTP request handler for the image capture service.
 
     This handler processes GET requests to the /capture endpoint. If the request path
-    is /capture, it retrieves the latest frame from the PicameraCapture instance,
+    is /capture, it retrieves the latest frame from the PicamZeroCapture instance,
     encodes it in base64, and sends it back in the response. For other paths, it
     returns a 404 response.
     """
@@ -86,7 +83,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         logger.debug(f"Received GET request for path: {self.path}")
         if self.path == '/capture':
             logger.info("Processing capture request")
-            frame = picamera_capture.get_frame()
+            frame = picamzero_capture.get_frame()
             if frame is not None:
                 base64_image = base64.b64encode(frame).decode('utf-8')
                 self.send_response(200)
@@ -122,11 +119,11 @@ def run(server_class=HTTPServer, handler_class=RequestHandler, port=8080):
     httpd.serve_forever()
 
 if __name__ == '__main__':
-    picamera_capture = PicameraCapture()
-    picamera_capture.start()
+    picamzero_capture = PicamZeroCapture()
+    picamzero_capture.start()
     try:
         run()
     except KeyboardInterrupt:
         pass
     finally:
-        picamera_capture.stop()
+        picamzero_capture.stop()
